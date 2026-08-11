@@ -141,7 +141,7 @@ defmodule JSCalendar.Object do
       {"recurrenceRules", :recurrence_rules, {:list_of, JSCalendar.RecurrenceRule}, nil},
       {"excludedRecurrenceRules", :excluded_recurrence_rules,
        {:list_of, JSCalendar.RecurrenceRule}, nil},
-      {"recurrenceOverrides", :recurrence_overrides, :any, nil},
+      {"recurrenceOverrides", :recurrence_overrides, {:patch_map, :local_date_time}, nil},
       {"excluded", :excluded, :boolean, false},
       {"priority", :priority, :int, 0},
       {"freeBusyStatus", :free_busy_status, {:enum, ~w(free busy)}, "busy"},
@@ -152,9 +152,9 @@ defmodule JSCalendar.Object do
       {"requestStatus", :request_status, :string, nil},
       {"useDefaultAlerts", :use_default_alerts, :boolean, false},
       {"alerts", :alerts, {:map_of, JSCalendar.Alert}, nil},
-      {"localizations", :localizations, :any, nil},
+      {"localizations", :localizations, {:patch_map, :string}, nil},
       {"timeZone", :time_zone, :string, nil},
-      {"timeZones", :time_zones, :any, nil}
+      {"timeZones", :time_zones, {:map_of, JSCalendar.TimeZone}, nil}
     ]
   end
 

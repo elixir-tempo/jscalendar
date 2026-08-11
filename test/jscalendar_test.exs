@@ -5,13 +5,19 @@ defmodule JSCalendarTest do
   alias JSCalendar.Group
   alias JSCalendar.Link
   alias JSCalendar.Location
+  alias JSCalendar.Occurrence
   alias JSCalendar.Participant
+  alias JSCalendar.Patch
   alias JSCalendar.RecurrenceRule
   alias JSCalendar.Task
+  alias JSCalendar.TimeZone
+  alias JSCalendar.TimeZoneRule
 
   doctest JSCalendar
   doctest JSCalendar.Event
   doctest JSCalendar.Type
+  doctest JSCalendar.Patch
+  doctest JSCalendar.Occurrence
 
   # RFC 8984 §6.1 — a simple event.
   @simple_event ~s({
@@ -351,6 +357,306 @@ defmodule JSCalendarTest do
 
       assert :json.decode(encoded)["example.com:x"] == %{"y" => :null}
       assert encoded =~ ~s("y":null)
+    end
+  end
+
+  describe "patch objects" do
+    test "a pointer that is a prefix of another is rejected" do
+      patch = %{"locations" => %{}, "locations/mlab/title" => "Room 2"}
+
+      assert {:error, {:overlapping_pointers, "locations", "locations/mlab/title"}} =
+               Patch.validate(patch)
+    end
+
+    test "a sibling that merely shares a string prefix is not an overlap" do
+      assert :ok = Patch.validate(%{"alert" => 1, "alerts" => 2})
+    end
+
+    test "nothing is applied when any pointer fails" do
+      target = %{"title" => "Standup", "start" => "2026-06-01T09:00:00"}
+
+      assert {:error, {:missing_parent, "locations/mlab/title"}} =
+               Patch.apply(target, %{
+                 "title" => "Retro",
+                 "locations/mlab/title" => "Room 2"
+               })
+    end
+
+    test "a pointer into an array is rejected rather than splicing" do
+      target = %{"recurrenceRules" => [%{"frequency" => "weekly"}]}
+
+      assert {:error, {:points_into_array, "recurrenceRules/0/frequency"}} =
+               Patch.apply(target, %{"recurrenceRules/0/frequency" => "daily"})
+    end
+
+    test "null removes and is a no-op when the property is absent" do
+      assert {:ok, %{"title" => "Standup"}} =
+               Patch.apply(%{"title" => "Standup", "color" => "red"}, %{"color" => nil})
+
+      assert {:ok, %{"title" => "Standup"}} =
+               Patch.apply(%{"title" => "Standup"}, %{"color" => :null})
+    end
+
+    test "decoding validates every patch in the map" do
+      json = ~s({"@type":"Event","recurrenceOverrides":{"2020-01-08T09:00:00":{"a":1,"a/b":2}}})
+
+      assert {:error,
+              {JSCalendar.Event, "recurrenceOverrides", {:overlapping_pointers, "a", "a/b"}}} =
+               JSCalendar.decode(json)
+    end
+  end
+
+  describe "recurrence overrides" do
+    # RFC 8984 §6.9 — Calculus I. A weekly lecture with an extra
+    # introductory session, one cancelled week, and an exam that moves.
+    setup do
+      json = """
+      {
+        "@type": "Event",
+        "uid": "calculus-i",
+        "title": "Calculus I",
+        "start": "2020-01-08T09:00:00",
+        "timeZone": "Europe/London",
+        "duration": "PT1H30M",
+        "locations": {
+          "mlab": {"@type": "Location", "name": "Math lab room 1"}
+        },
+        "recurrenceRules": [
+          {"@type": "RecurrenceRule", "frequency": "weekly", "until": "2020-06-24T09:00:00"}
+        ],
+        "recurrenceOverrides": {
+          "2020-01-07T14:00:00": {"title": "Introduction to Calculus I (optional)"},
+          "2020-04-01T09:00:00": {"excluded": true},
+          "2020-06-25T09:00:00": {
+            "title": "Calculus I Exam",
+            "start": "2020-06-25T10:00:00",
+            "duration": "PT2H",
+            "locations": {"auditorium": {"@type": "Location", "name": "Big Auditorium"}}
+          }
+        }
+      }
+      """
+
+      {:ok, event} = JSCalendar.decode(json)
+      %{event: event}
+    end
+
+    test "the override table decodes with date-time keys", %{event: event} do
+      assert Occurrence.overridden(event) == [
+               ~N[2020-01-07 14:00:00],
+               ~N[2020-04-01 09:00:00],
+               ~N[2020-06-25 09:00:00]
+             ]
+    end
+
+    test "an unoverridden occurrence inherits everything but its start", %{event: event} do
+      assert {:ok, occurrence} = Occurrence.at(event, ~N[2020-01-15 09:00:00])
+
+      assert occurrence.start == ~N[2020-01-15 09:00:00]
+      assert occurrence.title == "Calculus I"
+      assert occurrence.duration == %Duration{hour: 1, minute: 30}
+      assert occurrence.locations["mlab"].name == "Math lab room 1"
+    end
+
+    test "an occurrence carries its recurrence id and zone", %{event: event} do
+      assert {:ok, occurrence} = Occurrence.at(event, ~N[2020-01-15 09:00:00])
+
+      assert occurrence.recurrence_id == ~N[2020-01-15 09:00:00]
+      assert occurrence.recurrence_id_time_zone == "Europe/London"
+    end
+
+    test "an occurrence does not itself recur", %{event: event} do
+      assert {:ok, occurrence} = Occurrence.at(event, ~N[2020-01-15 09:00:00])
+
+      assert occurrence.recurrence_rules == nil
+      assert occurrence.recurrence_overrides == nil
+    end
+
+    test "an excluded occurrence is not an error", %{event: event} do
+      assert :excluded = Occurrence.at(event, ~N[2020-04-01 09:00:00])
+      assert Occurrence.excluded?(event, ~N[2020-04-01 09:00:00])
+    end
+
+    test "a patched start wins over the recurrence id", %{event: event} do
+      assert {:ok, exam} = Occurrence.at(event, ~N[2020-06-25 09:00:00])
+
+      assert exam.start == ~N[2020-06-25 10:00:00]
+      assert exam.recurrence_id == ~N[2020-06-25 09:00:00]
+      assert exam.duration == %Duration{hour: 2}
+      assert exam.title == "Calculus I Exam"
+    end
+
+    test "a replaced map replaces rather than merges", %{event: event} do
+      assert {:ok, exam} = Occurrence.at(event, ~N[2020-06-25 09:00:00])
+
+      assert Map.keys(exam.locations) == ["auditorium"]
+    end
+
+    test "an additional occurrence needs no rule to produce it", %{event: event} do
+      assert {:ok, intro} = Occurrence.at(event, ~N[2020-01-07 14:00:00])
+
+      assert intro.start == ~N[2020-01-07 14:00:00]
+      assert intro.title == "Introduction to Calculus I (optional)"
+    end
+
+    test "a pointer reaching into a nested object patches in place" do
+      json = """
+      {
+        "@type": "Event", "uid": "team", "start": "2020-01-08T09:00:00",
+        "participants": {
+          "zoe": {"@type": "Participant", "name": "Zoe", "participationStatus": "accepted"}
+        },
+        "recurrenceOverrides": {
+          "2020-03-04T09:00:00": {"participants/zoe/participationStatus": "declined"}
+        }
+      }
+      """
+
+      {:ok, event} = JSCalendar.decode(json)
+      {:ok, occurrence} = Occurrence.at(event, ~N[2020-03-04 09:00:00])
+
+      assert occurrence.participants["zoe"].participation_status == "declined"
+      assert occurrence.participants["zoe"].name == "Zoe"
+      assert event.participants["zoe"].participation_status == "accepted"
+    end
+
+    test "an ignored pointer is skipped, not rejected" do
+      json = """
+      {
+        "@type": "Event", "uid": "keep-me", "title": "Standup",
+        "start": "2020-01-08T09:00:00",
+        "recurrenceOverrides": {
+          "2020-01-15T09:00:00": {"uid": "changed", "title": "Retro"}
+        }
+      }
+      """
+
+      {:ok, event} = JSCalendar.decode(json)
+      {:ok, occurrence} = Occurrence.at(event, ~N[2020-01-15 09:00:00])
+
+      assert occurrence.uid == "keep-me"
+      assert occurrence.title == "Retro"
+    end
+
+    test "a task with no start anchors on its due date" do
+      task = %JSCalendar.Task{due: ~N[2020-01-08 17:00:00], title: "File returns"}
+
+      assert {:ok, occurrence} = Occurrence.at(task, ~N[2020-02-08 17:00:00])
+      assert occurrence.due == ~N[2020-02-08 17:00:00]
+      assert occurrence.start == nil
+    end
+
+    test "overrides round-trip through encoding" do
+      json = ~s({"@type":"Event","recurrenceOverrides":{"2020-01-08T09:00:00":{"title":"X"}}})
+
+      {:ok, event} = JSCalendar.decode(json)
+      {:ok, encoded} = JSCalendar.encode(event)
+
+      assert encoded =~ ~s("2020-01-08T09:00:00":{"title":"X"})
+    end
+  end
+
+  describe "localizations" do
+    test "keys are language tags and values are patches" do
+      json = """
+      {
+        "@type": "Event", "title": "Team meeting", "start": "2020-01-08T09:00:00",
+        "localizations": {
+          "de": {"title": "Teambesprechung"},
+          "fr": {"title": "Réunion d'équipe"}
+        }
+      }
+      """
+
+      {:ok, event} = JSCalendar.decode(json)
+
+      assert event.localizations["de"] == %{"title" => "Teambesprechung"}
+      assert Map.keys(event.localizations) |> Enum.sort() == ["de", "fr"]
+    end
+
+    test "only title, description and name may be localised" do
+      base = %{"title" => "Team meeting", "color" => "red"}
+      patch = %{"title" => "Teambesprechung", "color" => "blau"}
+
+      assert {:ok, localised} =
+               Patch.apply(base, patch, only: ~w(title description name))
+
+      assert localised == %{"title" => "Teambesprechung", "color" => "red"}
+    end
+  end
+
+  describe "custom time zones" do
+    test "a zone with standard and daylight rules decodes" do
+      json = """
+      {
+        "@type": "Event", "start": "2020-01-08T09:00:00", "timeZone": "/example/Test",
+        "timeZones": {
+          "/example/Test": {
+            "@type": "TimeZone",
+            "tzId": "/example/Test",
+            "updated": "2020-01-01T00:00:00Z",
+            "validUntil": "2030-01-01T00:00:00Z",
+            "aliases": {"/example/Alias": true},
+            "standard": [{
+              "@type": "TimeZoneRule",
+              "start": "1998-10-25T03:00:00",
+              "offsetFrom": "+0200",
+              "offsetTo": "+0100",
+              "names": {"CET": true},
+              "recurrenceRules": [{
+                "@type": "RecurrenceRule", "frequency": "yearly", "byMonth": ["10"]
+              }]
+            }],
+            "daylight": [{
+              "@type": "TimeZoneRule",
+              "start": "1998-03-29T02:00:00",
+              "offsetFrom": "+0100",
+              "offsetTo": "+0200",
+              "names": {"CEST": true}
+            }]
+          }
+        }
+      }
+      """
+
+      {:ok, event} = JSCalendar.decode(json)
+      zone = event.time_zones["/example/Test"]
+
+      assert zone.tz_id == "/example/Test"
+      assert zone.updated == ~U[2020-01-01 00:00:00Z]
+      assert zone.aliases == MapSet.new(["/example/Alias"])
+
+      [standard] = zone.standard
+      assert standard.start == ~N[1998-10-25 03:00:00]
+      assert standard.offset_from == "+0200"
+      assert standard.offset_to == "+0100"
+      assert standard.names == MapSet.new(["CET"])
+      assert [%JSCalendar.RecurrenceRule{frequency: "yearly"}] = standard.recurrence_rules
+
+      [daylight] = zone.daylight
+      assert daylight.offset_to == "+0200"
+    end
+
+    test "a custom zone round-trips" do
+      zone = %TimeZone{
+        tz_id: "/example/Test",
+        standard: [
+          %TimeZoneRule{
+            start: ~N[1998-10-25 03:00:00],
+            offset_from: "+0200",
+            offset_to: "+0100"
+          }
+        ]
+      }
+
+      encoded = TimeZone.to_map(zone)
+
+      assert %{"@type" => "TimeZone", "tzId" => "/example/Test"} = encoded
+
+      assert [%{"@type" => "TimeZoneRule", "start" => "1998-10-25T03:00:00"}] =
+               encoded["standard"]
+
+      assert {:ok, ^zone} = TimeZone.from_map(encoded)
     end
   end
 end

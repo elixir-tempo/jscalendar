@@ -51,6 +51,9 @@ defmodule JSCalendar.Event do
           participants: %{optional(String.t()) => JSCalendar.Participant.t()} | nil,
           locations: %{optional(String.t()) => JSCalendar.Location.t()} | nil,
           recurrence_rules: [JSCalendar.RecurrenceRule.t()] | nil,
+          recurrence_overrides: %{optional(NaiveDateTime.t()) => JSCalendar.Patch.t()} | nil,
+          localizations: %{optional(String.t()) => JSCalendar.Patch.t()} | nil,
+          time_zones: %{optional(String.t()) => JSCalendar.TimeZone.t()} | nil,
           extra: map()
         }
 

@@ -88,7 +88,15 @@ defmodule JSCalendar.MixProject do
           JSCalendar.Relation
         ],
         Who: [JSCalendar.Participant],
-        When: [JSCalendar.RecurrenceRule, JSCalendar.NDay, JSCalendar.Alert]
+        When: [
+          JSCalendar.RecurrenceRule,
+          JSCalendar.NDay,
+          JSCalendar.Alert,
+          JSCalendar.Occurrence,
+          JSCalendar.TimeZone,
+          JSCalendar.TimeZoneRule
+        ],
+        Patching: [JSCalendar.Patch]
       ]
     ]
   end

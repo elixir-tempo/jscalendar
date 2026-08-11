@@ -14,6 +14,8 @@ All notable changes to this project are documented here. The format follows [Kee
 
 * Properties equal to their RFC default are omitted on encode, so a document does not grow each time it is read and rewritten and encoding is idempotent.
 
-### Not yet implemented
+* `JSCalendar.Patch` implements RFC 8984 §1.4.9 PatchObjects with `apply/3` and `validate/1`. An invalid pointer rejects the whole patch rather than applying part of it, and `:ignore` and `:only` express the prefixes and suffixes the specification restricts particular properties to.
 
-* `recurrenceOverrides`, `localizations` and custom `timeZones` are preserved verbatim rather than parsed — they are PatchObjects and time zone definitions, and they deserve their own pass.
+* `JSCalendar.Occurrence.at/2` builds one instance of a recurring object from its recurrence id, applying any override. It answers `:excluded` distinctly from `{:error, _}`, and `overridden/1` lists the ids an object varies.
+
+* `recurrenceOverrides` and `localizations` are typed as patch maps — keyed by recurrence id and language tag respectively — and `timeZones` as `JSCalendar.TimeZone` with `JSCalendar.TimeZoneRule` standard and daylight rules.

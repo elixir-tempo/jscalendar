@@ -26,6 +26,8 @@ defmodule JSCalendar.Type do
 
   """
 
+  alias JSCalendar.Patch
+
   @typedoc "A property's declared JSCalendar type."
   @type spec ::
           :string
@@ -43,6 +45,7 @@ defmodule JSCalendar.Type do
           | {:object, module()}
           | {:map_of, module()}
           | {:list_of, module()}
+          | {:patch_map, spec()}
 
   @doc """
   Read a JSON value as `spec`.
@@ -147,6 +150,23 @@ defmodule JSCalendar.Type do
     collect(value, &module.from_map/1)
   end
 
+  # A map of patches, keyed by something typed — recurrence ids for
+  # `recurrenceOverrides`, language tags for `localizations`. The keys
+  # are decoded; the patches are not, because a `JSCalendar.Patch` is
+  # deliberately untyped — it names paths into an object rather than
+  # properties of one.
+  def decode(value, {:patch_map, key_spec}) when is_map(value) do
+    value
+    |> Enum.reduce_while({:ok, %{}}, fn {key, patch}, {:ok, acc} ->
+      with {:ok, decoded} <- decode(key, key_spec),
+           :ok <- Patch.validate(patch) do
+        {:cont, {:ok, Map.put(acc, decoded, patch)}}
+      else
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
   def decode(value, {:map_of, module}) when is_map(value) do
     value
     |> Enum.reduce_while({:ok, %{}}, fn {id, entry}, {:ok, acc} ->
@@ -213,6 +233,10 @@ defmodule JSCalendar.Type do
 
   def encode(value, {:map_of, module}) when is_map(value) do
     Map.new(value, fn {id, entry} -> {id, module.to_map(entry)} end)
+  end
+
+  def encode(value, {:patch_map, key_spec}) when is_map(value) do
+    Map.new(value, fn {key, patch} -> {encode(key, key_spec), patch} end)
   end
 
   def encode(value, _spec), do: value
