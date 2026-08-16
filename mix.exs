@@ -92,11 +92,14 @@ defmodule JSCalendar.MixProject do
           JSCalendar.RecurrenceRule,
           JSCalendar.NDay,
           JSCalendar.Alert,
+          JSCalendar.OffsetTrigger,
+          JSCalendar.AbsoluteTrigger,
           JSCalendar.Occurrence,
           JSCalendar.TimeZone,
           JSCalendar.TimeZoneRule
         ],
-        Patching: [JSCalendar.Patch]
+        Patching: [JSCalendar.Patch],
+        Internals: [JSCalendar.Object, JSCalendar.Type]
       ]
     ]
   end

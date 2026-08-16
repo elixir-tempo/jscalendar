@@ -71,7 +71,7 @@ defmodule JSCalendar.Object do
 
       ### Arguments
 
-      * `map` is a map with string keys, as `JSON.decode/1` returns.
+      * `map` is a map with string keys, as `:json.decode/1` returns.
 
       ### Returns
 
@@ -97,7 +97,7 @@ defmodule JSCalendar.Object do
 
       ### Returns
 
-      * a map with string keys, ready for `JSON.encode/1`.
+      * a map with string keys, ready for `:json.encode/1`.
 
       """
       @spec to_map(struct()) :: map()
