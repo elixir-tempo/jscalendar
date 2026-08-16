@@ -77,7 +77,7 @@ defmodule JSCalendar.MixProject do
       source_ref: "v#{@version}",
       main: "readme",
       extras: ["README.md", "CHANGELOG.md", "LICENSE.md"],
-      formatters: ["html"],
+      formatters: ["html", "markdown"],
       skip_undefined_reference_warnings_on: ["changelog", "CHANGELOG.md"],
       groups_for_modules: [
         "Calendar objects": [JSCalendar.Event, JSCalendar.Task, JSCalendar.Group],
